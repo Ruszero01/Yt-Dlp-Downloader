@@ -3,6 +3,7 @@ from tkinter import ttk, filedialog, messagebox
 import subprocess
 import threading
 import os
+import time
 import sv_ttk  # Sun Valley主题库
 import sys
 from tkinter import font as tkfont  # 导入字体模块
@@ -108,9 +109,24 @@ class YTDLPGUI:
         self.format_combobox.pack(side=tk.LEFT)
         
         # 下载按钮
-        self.download_button = ttk.Button(self.main_frame, text="⬇️ 下载视频", style="Accent.TButton", 
+        # 下载控制按钮框架
+        self.control_frame = ttk.Frame(self.main_frame)
+        self.control_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # 下载按钮
+        self.download_button = ttk.Button(self.control_frame, text="⬇️ 下载视频", style="Accent.TButton",
                                          command=self.start_download)
-        self.download_button.pack(fill=tk.X, pady=(0, 15), ipady=5)  # 增加按钮高度
+        self.download_button.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=5, padx=(0, 5))
+        
+        # 暂停按钮
+        self.pause_button = ttk.Button(self.control_frame, text="⏸️ 暂停",
+                                      command=self.toggle_pause, state=tk.DISABLED)
+        self.pause_button.pack(side=tk.LEFT, ipady=5, padx=(0, 5))
+        
+        # 取消按钮
+        self.cancel_button = ttk.Button(self.control_frame, text="❌ 取消",
+                                      command=self.cancel_download, state=tk.DISABLED)
+        self.cancel_button.pack(side=tk.LEFT, ipady=5)
         
         # 进度框架
         self.progress_frame = ttk.LabelFrame(self.main_frame, text="下载进度", padding="15 10")
@@ -166,10 +182,62 @@ class YTDLPGUI:
         self.progress_bar["value"] = 0
         self.update_status("开始下载...")
 
+        # 初始化下载控制变量
+        self.download_process = None
+        self.is_paused = False
+        self.should_cancel = False
+        
+        # 启用控制按钮
+        self.pause_button.config(state=tk.NORMAL)
+        self.cancel_button.config(state=tk.NORMAL)
+        
         # Run download in a separate thread
         self.download_thread = threading.Thread(target=self.run_download, args=(url, output_dir))
         self.download_thread.start()
 
+    def toggle_pause(self):
+        """切换暂停/恢复下载状态"""
+        if self.is_paused:
+            self.is_paused = False
+            self.pause_button.config(text="⏸️ 暂停")
+            self.update_status("已恢复下载")
+            if self.download_process:
+                # 发送CONT信号恢复进程 (Windows)
+                self.download_process.send_signal(subprocess.signal.CTRL_C_EVENT)
+        else:
+            self.is_paused = True
+            self.pause_button.config(text="▶️ 恢复")
+            self.update_status("下载已暂停")
+            if self.download_process:
+                # 发送BREAK信号暂停进程 (Windows)
+                self.download_process.send_signal(subprocess.signal.CTRL_BREAK_EVENT)
+    
+    def cancel_download(self):
+        """取消下载并清理文件"""
+        self.should_cancel = True
+        self.update_status("正在取消下载...")
+        
+        # 禁用所有控制按钮
+        self.download_button.config(state=tk.DISABLED)
+        self.pause_button.config(state=tk.DISABLED)
+        self.cancel_button.config(state=tk.DISABLED)
+        
+        # 重置进度条
+        self.progress_bar["value"] = 0
+        
+        # 在后台清理文件，完成后恢复状态
+        if self.url_entry.get() and self.output_dir_entry.get():
+            threading.Thread(target=self.clean_partial_files,
+                            args=(self.url_entry.get(), self.output_dir_entry.get(),
+                                  self.on_cleanup_complete)).start()
+        else:
+            self.on_cleanup_complete()
+    
+    def on_cleanup_complete(self):
+        """清理完成后的回调"""
+        self.update_status("下载已取消")
+        self.download_button.config(state=tk.NORMAL)
+    
     def run_download(self, url, output_dir):
         # Assuming yt-dlp.exe and ffmpeg.exe are in the bin directory relative to the script
         yt_dlp_path = os.path.join(os.path.dirname(__file__), "bin", "yt-dlp.exe")
@@ -198,22 +266,112 @@ class YTDLPGUI:
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
             
-            process = subprocess.Popen(command,
+            self.download_process = subprocess.Popen(command,
                                      stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT,
                                      text=True,
                                      bufsize=1,
                                      universal_newlines=True,
                                      startupinfo=startupinfo)
-            for line in process.stdout:
-                self.parse_and_update_progress(line)
-            process.wait()
-            if process.returncode == 0:
+            
+            for line in self.download_process.stdout:
+                if self.should_cancel:
+                    # 清理部分文件后退出循环
+                    self.clean_partial_files(url, output_dir)
+                    break
+                if not self.is_paused:
+                    self.parse_and_update_progress(line)
+            
+            self.download_process.wait()
+            
+            if self.should_cancel:
+                # 清理已下载的部分文件
+                self.clean_partial_files(url, output_dir)
+                return
+                
+            if self.download_process.returncode == 0:
                 self.update_status("下载完成！")
             else:
-                self.update_status(f"下载失败，错误码: {process.returncode}")
+                self.update_status(f"下载失败，错误码: {self.download_process.returncode}")
+                
         except Exception as e:
             self.update_status(f"执行命令时发生错误: {e}")
+        finally:
+            # 重置按钮状态
+            self.pause_button.config(state=tk.DISABLED)
+            self.cancel_button.config(state=tk.DISABLED)
+            self.download_process = None
+            self.is_paused = False
+            self.should_cancel = False
+    
+    def clean_partial_files(self, url, output_dir, callback=None):
+        """清理已下载的部分文件，完成后调用回调"""
+        try:
+            # 强制终止所有相关进程
+            if self.download_process:
+                try:
+                    self.download_process.terminate()
+                    self.download_process.wait(timeout=1)
+                except:
+                    pass
+                
+                # 清理完成后调用回调
+                if callback:
+                    callback()
+                
+                # 确保彻底终止yt-dlp和ffmpeg进程
+                try:
+                    subprocess.run(["taskkill", "/f", "/im", "yt-dlp.exe"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    subprocess.run(["taskkill", "/f", "/im", "ffmpeg.exe"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                except:
+                    pass
+            
+            # 获取视频标题用于匹配部分文件
+            yt_dlp_path = os.path.join(os.path.dirname(__file__), "bin", "yt-dlp.exe")
+            cmd = [yt_dlp_path, "--get-title", url]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                video_title = result.stdout.strip()
+                if video_title:
+                    # 查找并删除与标题匹配的部分文件
+                    temp_files = [
+                        f for f in os.listdir(output_dir)
+                        if video_title in f and (
+                            ".part" in f or  # 包含.part的任何位置
+                            f.endswith(".ytdl") or
+                            f.endswith(".temp") or
+                            ".download" in f or
+                            f.startswith("~") or
+                            ".frag" in f or  # 支持分片文件
+                            ".tmp" in f
+                        )
+                    ]
+                    
+                    for filename in temp_files:
+                        filepath = os.path.join(output_dir, filename)
+                        # 尝试删除文件，最多重试5次
+                        for attempt in range(5):
+                            try:
+                                if os.path.exists(filepath):
+                                    # 先尝试正常删除
+                                    try:
+                                        os.remove(filepath)
+                                        break
+                                    except PermissionError:
+                                        # 如果失败，尝试强制删除
+                                        subprocess.run(["del", "/f", "/q", filepath],
+                                                    shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                        break
+                            except Exception:
+                                if attempt < 4:
+                                    time.sleep(1)
+                                else:
+                                    raise
+        except:
+            pass
 
     def parse_and_update_progress(self, line):
         # Example yt-dlp progress line:
@@ -309,6 +467,20 @@ class YTDLPGUI:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    
+    def on_closing():
+        """窗口关闭事件处理"""
+        try:
+            # 终止所有相关进程
+            subprocess.run(["taskkill", "/f", "/im", "yt-dlp.exe"],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            subprocess.run(["taskkill", "/f", "/im", "ffmpeg.exe"],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except:
+            pass
+        root.destroy()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     
     # 设置窗口图标
     icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
