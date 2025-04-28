@@ -1,0 +1,35 @@
+# Python编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller打包生成文件
+build/
+dist/
+*.spec
+*.egg-info/
+
+# 二进制可执行文件（如果是打包后生成的）
+*.exe
+
+# 开发环境文件
+.env
+.venv
+env/
+venv/
+
+# IDE配置文件
+.vscode/
+.idea/
+
+# 系统临时文件
+.DS_Store
+Thumbs.db
+
+# 保留以下必需文件
+!main.py
+!assets/
+!icon.ico
+!bin/ffmpeg.exe
+!bin/ffprobe.exe
+!bin/yt-dlp.exe
