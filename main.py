@@ -321,10 +321,18 @@ class YTDLPGUI:
                 
                 # 确保彻底终止yt-dlp和ffmpeg进程
                 try:
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                    
                     subprocess.run(["taskkill", "/f", "/im", "yt-dlp.exe"],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                startupinfo=startupinfo)
                     subprocess.run(["taskkill", "/f", "/im", "ffmpeg.exe"],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                startupinfo=startupinfo)
                 except:
                     pass
             
@@ -472,10 +480,18 @@ if __name__ == "__main__":
         """窗口关闭事件处理"""
         try:
             # 终止所有相关进程
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            
             subprocess.run(["taskkill", "/f", "/im", "yt-dlp.exe"],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        startupinfo=startupinfo)
             subprocess.run(["taskkill", "/f", "/im", "ffmpeg.exe"],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        startupinfo=startupinfo)
         except:
             pass
         root.destroy()
